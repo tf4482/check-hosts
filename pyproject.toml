@@ -1,0 +1,7 @@
+[project]
+name = "check-hosts"
+version = "0.1.0"
+description = "ython project for concurrent ICMP and SSH host checks with PostgreSQL status updates."
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = []
