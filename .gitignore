@@ -107,3 +107,7 @@ vendor/
 wheels/
 yarn-debug.log*
 yarn-error.log*
+
+# Project-local environment and credentials
+.venv/
+config.yml
