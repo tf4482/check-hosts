@@ -8,6 +8,7 @@ import sys
 import tempfile
 import types
 import unittest
+from io import StringIO
 from pathlib import Path
 from unittest.mock import patch
 
@@ -102,7 +103,7 @@ class ProjectConfigTests(unittest.TestCase):
         psycopg2 = types.ModuleType("psycopg2")
         psycopg2.connect = lambda **kwargs: None
         extras = types.ModuleType("psycopg2.extras")
-        extras.execute_batch = lambda *args: None
+        extras.execute_values = lambda *args: None
         psycopg2.extras = extras
         cls.module_patcher = patch.dict(
             sys.modules,
@@ -213,8 +214,10 @@ class ProjectConfigTests(unittest.TestCase):
 
     def test_ssh_check_uses_configured_user_and_port(self) -> None:
         class FakeProcess:
-            async def wait(self) -> int:
-                return 0
+            returncode = 0
+
+            async def communicate(self) -> tuple[bytes, bytes]:
+                return b"", b""
 
         commands = []
 
@@ -243,9 +246,158 @@ class ProjectConfigTests(unittest.TestCase):
         self.assertEqual(len(commands), 1)
         command = commands[0]
         self.assertIn("BatchMode=yes", command)
+        self.assertIn("ConnectionAttempts=1", command)
         self.assertIn("2222", command)
         self.assertIn("user0@192.0.2.1", command)
         self.assertEqual(command[-1], "true")
+
+    def test_ssh_failure_includes_last_diagnostic_line(self) -> None:
+        class FakeProcess:
+            returncode = 255
+
+            async def communicate(self) -> tuple[bytes, bytes]:
+                return b"", b"debug line\nPermission denied (publickey).\n"
+
+        async def fake_subprocess(*command, **kwargs):
+            return FakeProcess()
+
+        host = self.main.Host("server", "192.0.2.1", "Linux")
+        with patch.object(
+            self.main.asyncio, "create_subprocess_exec", fake_subprocess
+        ):
+            result = asyncio.run(
+                self.main.check_ssh_host(host, asyncio.Semaphore(1), timeout=3)
+            )
+
+        self.assertFalse(result.online)
+        self.assertEqual(result.detail, "Permission denied (publickey).")
+
+    def test_tcp_mode_opens_configured_address_and_port(self) -> None:
+        class FakeWriter:
+            def __init__(self) -> None:
+                self.closed = False
+
+            def close(self) -> None:
+                self.closed = True
+
+            async def wait_closed(self) -> None:
+                pass
+
+        writer = FakeWriter()
+        connections = []
+
+        async def fake_open_connection(address, port):
+            connections.append((address, port))
+            return object(), writer
+
+        host = self.main.Host("server", "192.0.2.1", "Linux", ssh_port=2222)
+        with patch.object(self.main.asyncio, "open_connection", fake_open_connection):
+            results = asyncio.run(
+                self.main.check_ssh_hosts([host], concurrency=1, timeout=3, mode="tcp")
+            )
+
+        self.assertTrue(results[0].online)
+        self.assertEqual(connections, [("192.0.2.1", 2222)])
+        self.assertTrue(writer.closed)
+
+    def test_invalid_ssh_mode_is_rejected(self) -> None:
+        with self.assertRaisesRegex(ValueError, "ssh_check_mode"):
+            asyncio.run(
+                self.main.check_ssh_hosts([], concurrency=1, timeout=3, mode="banner")
+            )
+
+    def test_allowed_networks_accept_matching_addresses_and_dns_names(self) -> None:
+        networks = self.main.parse_allowed_networks(
+            {"allowed_networks": ["192.168.0.0/16", "10.8.0.0/24"]}
+        )
+        hosts = [
+            self.main.Host("lan", "192.168.1.10", "Linux", "10.8.0.2"),
+            self.main.Host("dns", "server.example.test", "Linux"),
+        ]
+
+        self.main.validate_host_networks(hosts, networks, "ping_hosts")
+
+    def test_allowed_networks_reject_outside_address(self) -> None:
+        networks = self.main.parse_allowed_networks(
+            {"allowed_networks": ["192.168.0.0/16"]}
+        )
+        hosts = [self.main.Host("typo", "198.168.1.10", "Linux")]
+
+        with self.assertRaisesRegex(ValueError, "198.168.1.10.*outside"):
+            self.main.validate_host_networks(hosts, networks, "ssh_hosts")
+
+    def test_vpn_fallbacks_are_batched_into_one_process(self) -> None:
+        class FakeProcess:
+            returncode = 0
+
+            async def communicate(self) -> tuple[bytes, bytes]:
+                return b"10.8.0.2\n", b""
+
+        commands = []
+
+        async def fake_subprocess(*command, **kwargs):
+            commands.append(command)
+            return FakeProcess()
+
+        hosts = [
+            self.main.Host("one", "192.0.2.1", "Linux", "10.8.0.2"),
+            self.main.Host("two", "192.0.2.2", "Linux", "10.8.0.3"),
+        ]
+        with patch.object(
+            self.main.asyncio, "create_subprocess_exec", fake_subprocess
+        ):
+            result = asyncio.run(
+                self.main.check_vpn_ping_hosts(hosts, timeout=1, vpn_container="vpn")
+            )
+
+        self.assertEqual(len(commands), 1)
+        self.assertIn("10.8.0.2", commands[0])
+        self.assertIn("10.8.0.3", commands[0])
+        self.assertEqual(result.reachable, frozenset({"10.8.0.2"}))
+
+    def test_print_results_includes_duration_and_failure_detail(self) -> None:
+        host = self.main.Host("server", "192.0.2.1", "Linux")
+        result = self.main.HostStatus(host, False, 1.234, "connection refused")
+        output = StringIO()
+
+        self.main.print_results([result], stream=output)
+
+        self.assertEqual(
+            output.getvalue(),
+            "  ❌ server: offline (1.23s, connection refused)\n",
+        )
+
+    def test_redirected_output_uses_emojis_without_ansi_colors(self) -> None:
+        output = StringIO()
+
+        self.main.print_message("🚀", "Running checks…", "cyan", stream=output)
+
+        self.assertEqual(output.getvalue(), "🚀  Running checks…\n")
+        self.assertNotIn("\033[", output.getvalue())
+
+    def test_interactive_output_uses_ansi_colors(self) -> None:
+        class TtyBuffer(StringIO):
+            def isatty(self) -> bool:
+                return True
+
+        output = TtyBuffer()
+        with patch.dict("os.environ", {}, clear=True):
+            self.main.print_message("✅", "Online", "green", stream=output)
+
+        self.assertIn("\033[1;92m", output.getvalue())
+        self.assertIn("✅  Online", output.getvalue())
+        self.assertTrue(output.getvalue().endswith("\033[0m\n"))
+
+    def test_no_color_environment_variable_disables_ansi_colors(self) -> None:
+        class TtyBuffer(StringIO):
+            def isatty(self) -> bool:
+                return True
+
+        output = TtyBuffer()
+        with patch.dict("os.environ", {"NO_COLOR": "1"}, clear=True):
+            self.main.print_message("✅", "Online", "green", stream=output)
+
+        self.assertEqual(output.getvalue(), "✅  Online\n")
 
 
 if __name__ == "__main__":
