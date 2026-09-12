@@ -102,11 +102,13 @@ edited safely. Use `--config` to load one exact path without fallback behavior.
     "password": "change-me"
   },
   "settings": {
-    "ping_concurrency": 8,
+    "ping_concurrency": 20,
     "ping_timeout_seconds": 1,
     "vpn_container": "wireguard",
     "ssh_concurrency": 4,
-    "ssh_timeout_seconds": 10
+    "ssh_timeout_seconds": 3,
+    "ssh_check_mode": "login",
+    "allowed_networks": []
   },
   "ping_hosts": [
     {
@@ -136,14 +138,38 @@ edited safely. Use `--config` to load one exact path without fallback behavior.
 ### Ping checks
 
 The primary `address` is checked with one ICMP packet. If that fails and the host
-has a `vpn_address`, the application runs a second ping inside `vpn_container`
-with `docker exec`.
+has a `vpn_address`, the application checks all required VPN fallback addresses
+in parallel through one `docker exec` invocation.
 
 ### SSH checks
 
-SSH checks run the remote command `true` with batch mode enabled. Configure
-non-interactive authentication, such as an SSH key and agent, before running the
-application. Interactive password prompts are not supported.
+Set `ssh_check_mode` to one of:
+
+- `login` (default): run the remote command `true` with batch mode enabled. This
+  verifies the SSH service, host key, authentication, and command execution.
+  Configure non-interactive authentication, such as an SSH key and agent, before
+  running the application. Interactive password prompts are not supported.
+- `tcp`: only verify that a TCP connection can be opened to `address:ssh_port`.
+  This is faster but does not verify SSH authentication or command execution.
+
+Each SSH check makes one connection attempt. The default connection timeout is
+three seconds, which is intended for local networks.
+
+### Network validation
+
+`allowed_networks` optionally restricts literal host and VPN IP addresses to a
+list of IPv4 or IPv6 CIDR networks. An empty list disables validation. DNS names
+remain valid because their resolved addresses may change.
+
+For example:
+
+```json
+"allowed_networks": ["192.168.0.0/16", "10.8.0.0/24"]
+```
+
+When enabled, an address outside every configured network causes a configuration
+error before any checks start. This can catch mistakes such as `198.168.1.10`
+instead of `192.168.1.10` without waiting for a network timeout.
 
 ## Usage
 
@@ -176,13 +202,29 @@ The source file can also be invoked directly:
 python main.py --ssh --config config.json
 ```
 
-Results are printed after their PostgreSQL updates complete:
+Results include elapsed time and, for failed checks, a concise diagnostic. Host
+results are printed before their PostgreSQL update, followed by a final summary:
 
 ```text
-workstation-01: online
-laptop-01: offline
-server-01: online
+⚙️  Configuration loaded
+📡  Ping: 2 hosts, concurrency 20, timeout 1s
+🔐  SSH: 1 hosts, mode login, concurrency 4, timeout 3s
+🚀  Running host checks…
+
+📋  Host results
+  ✅ workstation-01: online (0.01s)
+  ❌ laptop-01: offline (1.04s, primary and VPN ping failed)
+  ✅ server-01: online (0.12s)
+
+💾  Updating PostgreSQL at 127.0.0.1:5432 /host_status…
+✅  Database statuses updated
+⚠️  Completed in 1.06s — 2 online, 1 offline, 3 checked
 ```
+
+Interactive terminals use ANSI colors for stages, statuses, timing metadata,
+and summaries. Redirected output remains plain text. Set the standard `NO_COLOR`
+environment variable or `TERM=dumb` to disable colors explicitly; emojis remain
+present so log stages and statuses are still easy to scan.
 
 ## Behavior and limitations
 
@@ -191,7 +233,8 @@ server-01: online
   in one database transaction.
 - An unreachable host does not produce a non-zero process exit code; startup,
   configuration, or database errors do.
-- Command output is suppressed. Missing commands, authentication failures, and
-  connection failures are currently represented as an offline result.
+- Command output is suppressed, but a concise failure reason is included in the
+  result. Missing commands, authentication failures, and connection failures are
+  represented as an offline result.
 - Ping and SSH checks update the same `status` and `last_check` columns. Avoid
   placing the same host in both lists unless this overwrite behavior is desired.
