@@ -7,11 +7,13 @@
     "password": "change-me"
   },
   "settings": {
-    "ping_concurrency": 8,
+    "ping_concurrency": 20,
     "ping_timeout_seconds": 1,
     "vpn_container": "wireguard",
     "ssh_concurrency": 4,
-    "ssh_timeout_seconds": 10
+    "ssh_timeout_seconds": 3,
+    "ssh_check_mode": "login",
+    "allowed_networks": []
   },
   "ping_hosts": [
     {
