@@ -12,6 +12,8 @@ from io import StringIO
 from pathlib import Path
 from unittest.mock import patch
 
+import yaml
+
 from utils_python.config_loader import load_config
 from utils_python.list_files import list_files
 
@@ -19,6 +21,11 @@ from utils_python.list_files import list_files
 def write_json(path: Path, data: object) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(data), encoding="utf-8")
+
+
+def write_yaml(path: Path, data: object) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
 
 
 class ConfigLoaderTests(unittest.TestCase):
@@ -97,6 +104,35 @@ class ConfigLoaderTests(unittest.TestCase):
             )
             self.assertEqual(stat.S_IMODE(expected_path.stat().st_mode), 0o600)
 
+    def test_explicit_yaml_path_is_loaded_without_fallback(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            config_path = Path(directory) / "custom.yml"
+            write_yaml(config_path, {"source": "yaml", "enabled": True})
+
+            config = load_config(
+                "example", "config.yml", {}, config_path=config_path
+            )
+
+        self.assertEqual(config, {"source": "yaml", "enabled": True})
+
+    def test_missing_yaml_config_creates_private_yaml_placeholder(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            home = root / "home"
+            defaults = {"settings": {"suffix": "example.test"}}
+            expected_path = home / ".config" / "example" / "config.yml"
+
+            with (
+                patch("utils_python.config_loader.Path.home", return_value=home),
+                self.assertRaises(SystemExit),
+            ):
+                load_config("example", "config.yml", defaults, local_dir=root / "local")
+
+            self.assertEqual(
+                yaml.safe_load(expected_path.read_text(encoding="utf-8")), defaults
+            )
+            self.assertEqual(stat.S_IMODE(expected_path.stat().st_mode), 0o600)
+
 
 class ProjectConfigTests(unittest.TestCase):
     @classmethod
@@ -120,14 +156,14 @@ class ProjectConfigTests(unittest.TestCase):
 
     def test_project_loader_accepts_required_sections(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
-            config_path = Path(directory) / "config.json"
+            config_path = Path(directory) / "config.yml"
             expected = {
                 "database": {},
                 "settings": {"suffix": "example.test"},
                 "ping_hosts": [],
                 "ssh_hosts": [],
             }
-            write_json(config_path, expected)
+            write_yaml(config_path, expected)
 
             config = self.main.load_config(config_path)
 
@@ -135,16 +171,16 @@ class ProjectConfigTests(unittest.TestCase):
 
     def test_project_loader_rejects_missing_sections(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
-            config_path = Path(directory) / "config.json"
-            write_json(config_path, {"settings": {}})
+            config_path = Path(directory) / "config.yml"
+            write_yaml(config_path, {"settings": {}})
 
             with self.assertRaisesRegex(ValueError, "Missing configuration sections"):
                 self.main.load_config(config_path)
 
     def test_project_loader_rejects_missing_suffix(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
-            config_path = Path(directory) / "config.json"
-            write_json(
+            config_path = Path(directory) / "config.yml"
+            write_yaml(
                 config_path,
                 {
                     "database": {},
@@ -238,7 +274,7 @@ class ProjectConfigTests(unittest.TestCase):
             patch.object(
                 sys,
                 "argv",
-                ("main.py", "--config", "one.json", "--select-config", "configs"),
+                ("main.py", "--config", "one.yml", "--select-config", "configs"),
             ),
             patch("sys.stderr"),
             self.assertRaises(SystemExit) as context,
@@ -273,15 +309,15 @@ class ProjectConfigTests(unittest.TestCase):
 
     def test_choose_config_uses_shared_selector_and_file_check(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
-            selected = Path(directory) / "nested" / "config.json"
-            write_json(selected, {})
+            selected = Path(directory) / "nested" / "config.yml"
+            write_yaml(selected, {})
 
             with patch.object(
                 self.main, "select_file", return_value=str(selected)
             ) as selector:
                 result = self.main.choose_config(Path(directory))
 
-        selector.assert_called_once_with(directory, ".json")
+        selector.assert_called_once_with(directory, ".yml")
         self.assertEqual(result, selected)
 
     def test_shared_file_listing_recurses_and_filters(self) -> None:
@@ -306,15 +342,15 @@ class ProjectConfigTests(unittest.TestCase):
     def test_backup_config_preserves_file_content(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            source = root / "source" / "config.json"
+            source = root / "source" / "config.yml"
             target = root / "backup"
-            write_json(source, {"source": "active"})
+            write_yaml(source, {"source": "active"})
 
             destination = self.main.backup_config(source, target)
 
-            self.assertEqual(destination, target / "config.json")
+            self.assertEqual(destination, target / "config.yml")
             self.assertEqual(
-                json.loads(destination.read_text(encoding="utf-8")),
+                yaml.safe_load(destination.read_text(encoding="utf-8")),
                 {"source": "active"},
             )
 
