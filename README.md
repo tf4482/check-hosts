@@ -8,7 +8,6 @@ with ICMP ping, SSH, or both and writes the results to PostgreSQL.
 - Python 3.12 or newer
 - PostgreSQL
 - The system `ping` and `ssh` commands
-- Docker when using the optional VPN ping fallback
 
 ## Installation
 
@@ -36,6 +35,24 @@ python -m pip install -e .
 
 This installs the `check-hosts` command and its Python dependencies.
 
+### Shared utility submodule
+
+The application reuses the `utils_python` submodule for cross-project concerns:
+
+- `config_loader` and `filecheck`: configuration discovery, path checks, loading,
+  and private placeholder creation.
+- `colored_text` and `convert_to_string`: TTY-aware ANSI formatting and consistent
+  value-to-text conversion.
+- `check_config`: required-value validation.
+- `create_config`: typed, nested in-memory configuration overrides.
+- `list_files`, `directory_traversal`, and `select_file`: recursive interactive
+  JSON configuration selection.
+- `copy_files`: metadata-preserving configuration backups.
+- `dpkg_check`: optional Debian package details in the runtime doctor.
+
+All utility modules are now used either directly by the application or
+transitively by another shared utility.
+
 ## Standalone executable
 
 Install the locked development tools and build a single-file Linux executable:
@@ -55,7 +72,7 @@ The executable is written to `dist/check-hosts`:
 The executable bundles the Python application and Python dependencies, but keeps
 configuration external. Without `--config`, it searches for `config.json` in the
 current working directory and then `~/.config/check-hosts/config.json`. The system
-`ping`, `ssh`, and optional `docker` commands are also still required at runtime.
+`ping` and `ssh` commands are also still required at runtime.
 
 ## Database
 
@@ -63,16 +80,16 @@ The application expects a PostgreSQL `hosts` table with at least these columns:
 
 ```sql
 CREATE TABLE hosts (
-    name TEXT NOT NULL,
+    name TEXT PRIMARY KEY,
     os TEXT NOT NULL,
     status TEXT NOT NULL DEFAULT 'offline',
-    last_check TIMESTAMP,
-    PRIMARY KEY (name, os)
+    last_check TIMESTAMP
 );
 ```
 
-Each configured host must already have a matching row. Updates identify hosts by
-the combination of `name` and `os`.
+Each completed run reconciles the table against tested entity names: missing names
+are inserted, matching names are updated, and rows for names not tested are
+removed. Entity names must therefore be unique.
 
 ## Configuration
 
@@ -102,9 +119,9 @@ edited safely. Use `--config` to load one exact path without fallback behavior.
     "password": "change-me"
   },
   "settings": {
+    "suffix": "example.com",
     "ping_concurrency": 20,
     "ping_timeout_seconds": 1,
-    "vpn_container": "wireguard",
     "ssh_concurrency": 4,
     "ssh_timeout_seconds": 3,
     "ssh_check_mode": "login",
@@ -118,8 +135,6 @@ edited safely. Use `--config` to load one exact path without fallback behavior.
     },
     {
       "name": "laptop-01",
-      "address": "192.0.2.20",
-      "vpn_address": "10.8.0.10",
       "os": "Windows"
     }
   ],
@@ -137,9 +152,12 @@ edited safely. Use `--config` to load one exact path without fallback behavior.
 
 ### Ping checks
 
-The primary `address` is checked with one ICMP packet. If that fails and the host
-has a `vpn_address`, the application checks all required VPN fallback addresses
-in parallel through one `docker exec` invocation.
+Each host `address` is checked with one ICMP packet.
+
+Host `address` is optional. When it is omitted or blank, the application uses
+`<name>.<settings.suffix>` instead. The shared `settings.suffix` value is required
+for any host without an explicit address; it may be written with or without its
+leading dot.
 
 ### SSH checks
 
@@ -157,9 +175,9 @@ three seconds, which is intended for local networks.
 
 ### Network validation
 
-`allowed_networks` optionally restricts literal host and VPN IP addresses to a
-list of IPv4 or IPv6 CIDR networks. An empty list disables validation. DNS names
-remain valid because their resolved addresses may change.
+`allowed_networks` optionally restricts literal host IP addresses to a list of
+IPv4 or IPv6 CIDR networks. An empty list disables validation. DNS names remain
+valid because their resolved addresses may change.
 
 For example:
 
@@ -196,6 +214,43 @@ Use another configuration file:
 check-hosts --ping --config /path/to/config.json
 ```
 
+Interactively select a JSON configuration from a directory and its
+subdirectories:
+
+```bash
+check-hosts --select-config ./configs
+```
+
+Apply typed, nested overrides without modifying the source file. Values are
+parsed as JSON when possible; unquoted values remain strings:
+
+```bash
+check-hosts \
+  --set settings.ssh_timeout_seconds=2 \
+  --set settings.ssh_check_mode='"tcp"' \
+  --set settings.allowed_networks='["192.168.0.0/16","10.8.0.0/24"]'
+```
+
+Back up the selected configuration before running checks:
+
+```bash
+check-hosts --config ./config.json --backup-config ./backups
+```
+
+The backup preserves file metadata and uses the source filename. The source and
+destination must be different paths.
+
+Run the standalone dependency doctor without loading configuration, checking
+hosts, or updating PostgreSQL:
+
+```bash
+check-hosts --doctor
+```
+
+The doctor checks the required `ping` and `ssh` executables. On Debian-based
+systems it also reports matching installed packages. It exits non-zero when a
+required executable is missing.
+
 The source file can also be invoked directly:
 
 ```bash
@@ -213,7 +268,7 @@ results are printed before their PostgreSQL update, followed by a final summary:
 
 📋  Host results
   ✅ workstation-01: online (0.01s)
-  ❌ laptop-01: offline (1.04s, primary and VPN ping failed)
+  ❌ laptop-01: offline (1.04s, primary ping failed)
   ✅ server-01: online (0.12s)
 
 💾  Updating PostgreSQL at 127.0.0.1:5432 /host_status…
@@ -238,3 +293,7 @@ present so log stages and statuses are still easy to scan.
   represented as an offline result.
 - Ping and SSH checks update the same `status` and `last_check` columns. Avoid
   placing the same host in both lists unless this overwrite behavior is desired.
+- Interactive configuration selection occurs only when `--select-config` is
+  supplied, so unattended executions remain non-interactive.
+- Configuration overrides are in-memory only; backups always copy the original
+  loaded file rather than a generated override result.
