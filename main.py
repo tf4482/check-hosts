@@ -27,7 +27,7 @@ from utils_python.filecheck import filecheck
 from utils_python.select_file import select_file
 
 APP_NAME = "check-hosts"
-CONFIG_FILENAME = "config.json"
+CONFIG_FILENAME = "config.yml"
 ANSI_COLORS = {
     "blue": "\033[1;94m",
     "cyan": "\033[1;96m",
@@ -228,7 +228,7 @@ def apply_config_overrides(
 
 
 def choose_config(directory: Path) -> Path:
-    selected = select_file(str(directory), ".json")
+    selected = select_file(str(directory), ".yml")
     if selected is None:
         raise SystemExit("Configuration selection cancelled")
     if not filecheck(selected):
@@ -631,15 +631,15 @@ def parse_args() -> argparse.Namespace:
         "--config",
         type=Path,
         help=(
-            "exact JSON configuration path; otherwise search ./config.json and "
-            "~/.config/check-hosts/config.json"
+            "exact YAML configuration path; otherwise search ./config.yml and "
+            "~/.config/check-hosts/config.yml"
         ),
     )
     config_source.add_argument(
         "--select-config",
         type=Path,
         metavar="DIRECTORY",
-        help="interactively select a JSON configuration below DIRECTORY",
+        help="interactively select a YAML configuration below DIRECTORY",
     )
     parser.add_argument(
         "--set",

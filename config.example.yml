@@ -1,0 +1,29 @@
+database:
+  host: 127.0.0.1
+  port: 5432
+  name: host_status
+  user: status_user
+  password: change-me
+
+settings:
+  suffix: example.com
+  ping_concurrency: 20
+  ping_timeout_seconds: 1
+  ssh_concurrency: 4
+  ssh_timeout_seconds: 3
+  ssh_check_mode: login
+  allowed_networks: []
+
+ping_hosts:
+  - name: workstation-01
+    address: 192.0.2.10
+    os: Linux
+  - name: laptop-01
+    os: Windows
+
+ssh_hosts:
+  - name: server-01
+    address: 198.51.100.10
+    os: Linux
+    ssh_user: automation
+    ssh_port: 22

@@ -46,7 +46,7 @@ The application reuses the `utils_python` submodule for cross-project concerns:
 - `check_config`: required-value validation.
 - `create_config`: typed, nested in-memory configuration overrides.
 - `list_files`, `directory_traversal`, and `select_file`: recursive interactive
-  JSON configuration selection.
+  YAML configuration selection.
 - `copy_files`: metadata-preserving configuration backups.
 - `dpkg_check`: optional Debian package details in the runtime doctor.
 
@@ -66,12 +66,12 @@ The executable is written to `dist/check-hosts`:
 
 ```bash
 ./dist/check-hosts --help
-./dist/check-hosts --ssh --config config.json
+./dist/check-hosts --ssh --config config.yml
 ```
 
 The executable bundles the Python application and Python dependencies, but keeps
-configuration external. Without `--config`, it searches for `config.json` in the
-current working directory and then `~/.config/check-hosts/config.json`. The system
+configuration external. Without `--config`, it searches for `config.yml` in the
+current working directory and then `~/.config/check-hosts/config.yml`. The system
 `ping` and `ssh` commands are also still required at runtime.
 
 ## Database
@@ -96,58 +96,49 @@ removed. Entity names must therefore be unique.
 Copy the example configuration and replace its placeholder values:
 
 ```bash
-cp config.example.json config.json
-chmod 600 config.json
+cp config.example.yml config.yml
+chmod 600 config.yml
 ```
 
 Without `--config`, the application searches for configuration in this order:
 
-1. `config.json` in the current working directory.
-2. `~/.config/check-hosts/config.json`.
+1. `config.yml` in the current working directory.
+2. `~/.config/check-hosts/config.yml`.
 
 If neither file exists, the shared configuration loader creates a placeholder at
-`~/.config/check-hosts/config.json` with `0600` permissions and exits so it can be
+`~/.config/check-hosts/config.yml` with `0600` permissions and exits so it can be
 edited safely. Use `--config` to load one exact path without fallback behavior.
 
-```json
-{
-  "database": {
-    "host": "127.0.0.1",
-    "port": 5432,
-    "name": "host_status",
-    "user": "status_user",
-    "password": "change-me"
-  },
-  "settings": {
-    "suffix": "example.com",
-    "ping_concurrency": 20,
-    "ping_timeout_seconds": 1,
-    "ssh_concurrency": 4,
-    "ssh_timeout_seconds": 3,
-    "ssh_check_mode": "login",
-    "allowed_networks": []
-  },
-  "ping_hosts": [
-    {
-      "name": "workstation-01",
-      "address": "192.0.2.10",
-      "os": "Linux"
-    },
-    {
-      "name": "laptop-01",
-      "os": "Windows"
-    }
-  ],
-  "ssh_hosts": [
-    {
-      "name": "server-01",
-      "address": "198.51.100.10",
-      "os": "Linux",
-      "ssh_user": "automation",
-      "ssh_port": 22
-    }
-  ]
-}
+```yaml
+database:
+  host: 127.0.0.1
+  port: 5432
+  name: host_status
+  user: status_user
+  password: change-me
+
+settings:
+  suffix: example.com
+  ping_concurrency: 20
+  ping_timeout_seconds: 1
+  ssh_concurrency: 4
+  ssh_timeout_seconds: 3
+  ssh_check_mode: login
+  allowed_networks: []
+
+ping_hosts:
+  - name: workstation-01
+    address: 192.0.2.10
+    os: Linux
+  - name: laptop-01
+    os: Windows
+
+ssh_hosts:
+  - name: server-01
+    address: 198.51.100.10
+    os: Linux
+    ssh_user: automation
+    ssh_port: 22
 ```
 
 ### Ping checks
@@ -181,7 +172,7 @@ valid because their resolved addresses may change.
 
 For example:
 
-```json
+```yaml
 "allowed_networks": ["192.168.0.0/16", "10.8.0.0/24"]
 ```
 
@@ -211,10 +202,10 @@ protocol; supplying both flags explicitly runs both.
 Use another configuration file:
 
 ```bash
-check-hosts --ping --config /path/to/config.json
+check-hosts --ping --config /path/to/config.yml
 ```
 
-Interactively select a JSON configuration from a directory and its
+Interactively select a YAML configuration from a directory and its
 subdirectories:
 
 ```bash
@@ -234,7 +225,7 @@ check-hosts \
 Back up the selected configuration before running checks:
 
 ```bash
-check-hosts --config ./config.json --backup-config ./backups
+check-hosts --config ./config.yml --backup-config ./backups
 ```
 
 The backup preserves file metadata and uses the source filename. The source and
@@ -254,7 +245,7 @@ required executable is missing.
 The source file can also be invoked directly:
 
 ```bash
-python main.py --ssh --config config.json
+python main.py --ssh --config config.yml
 ```
 
 Results include elapsed time and, for failed checks, a concise diagnostic. Host
