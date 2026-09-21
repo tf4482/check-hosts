@@ -7,9 +7,9 @@
     "password": "change-me"
   },
   "settings": {
+    "suffix": "example.com",
     "ping_concurrency": 20,
     "ping_timeout_seconds": 1,
-    "vpn_container": "wireguard",
     "ssh_concurrency": 4,
     "ssh_timeout_seconds": 3,
     "ssh_check_mode": "login",
@@ -23,8 +23,6 @@
     },
     {
       "name": "laptop-01",
-      "address": "192.0.2.20",
-      "vpn_address": "10.8.0.10",
       "os": "Windows"
     }
   ],
